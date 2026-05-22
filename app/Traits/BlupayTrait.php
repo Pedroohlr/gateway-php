@@ -1,0 +1,404 @@
+<?php
+
+namespace App\Traits;
+
+use App\Models\Blupay;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use App\Models\Solicitacoes;
+use App\Models\SolicitacoesCashOut;
+use App\Models\App;
+use App\Models\User;
+use App\Helpers\Helper;
+
+trait BlupayTrait
+{
+    protected static array $headers;
+    protected static string $urlCashIn;
+    protected static string $urlCashOut;
+    protected static string $taxaCashIn;
+    protected static string $taxaCashOut;
+    protected static string $idempotencyKey;
+
+    protected static function generateCredentialsBlupay()
+    {
+
+        $setting = Blupay::first();
+        if (!$setting) {
+            return false;
+        }
+
+        self::$urlCashIn = $setting->url . '/api/v1/transactions';
+        self::$urlCashOut = $setting->url . '/api/v1/transactions/pix-out';
+        self::$taxaCashIn = $setting->taxa_pix_cash_in;
+        self::$taxaCashOut = $setting->taxa_pix_cash_out;
+        self::$idempotencyKey = $setting->idempotency_key;
+        /* dd($setting->idempotency_key,
+        $setting->username,
+        $setting->password); */
+        self::$headers = [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($setting->username . ':' . $setting->password),
+        ];
+        return true;
+    }
+
+    public static function semAcentos(string $string)
+    {
+        $newString = str_replace(['.', '-', '(', ')', ' '], '', $string);
+        return $newString;
+    }
+
+    public static function requestDepositBlupay($data)
+    {
+        if (self::generateCredentialsBlupay()) {
+            $client_ip = $data->ip();
+
+            $productid = uniqid();
+            $document = Helper::generateValidCpf();
+
+            $payload = [
+                "amount" => intval($data->amount * 100),
+                "paymentMethod" => "pix",
+                "customer" => [
+                    "name" => $data->debtor_name,
+                    "email" => $data->email,
+                    "phone" => self::semAcentos($data->phone),
+                    "document" => [
+                        "number" => self::semAcentos($document),
+                        "type" => "cpf"
+                    ]
+                ],
+                "items" => [
+                    [
+                        "title" => "Produto " . $productid,
+                        "description" => "Produto " . $productid,
+                        "unitPrice" => intval($data->amount * 100),
+                        "quantity" => 1,
+                        "tangible" => false
+                    ]
+                ],
+                "postbackUrl" => url("blupay/callback/deposit"),
+            ];
+
+            $response = Http::withHeaders(self::$headers)->post(self::$urlCashIn, $payload);
+            //dd(self::$headers, $payload, $response->json());
+            if ($response->successful()) {
+
+                $responseData = $response->json();
+                $setting = App::first();
+                $user = $data->user;
+                $taxafixa = $user->taxa_cash_in_fixa;
+
+                $taxatotal = ((float) $data->amount * (float) $user->taxa_cash_in / 100);
+                $deposito_liquido = (float) $data->amount - $taxatotal;
+                $taxa_cash_in = $taxatotal;
+                $descricao = "PORCENTAGEM";
+
+                if ($taxafixa <= 0 && (float) $taxatotal < (float) $setting->baseline) {
+                    $deposito_liquido = (float) $data->amount - (float) $setting->baseline;
+                    $taxa_cash_in = (float) $setting->baseline;
+                    $descricao = "FIXA";
+                }
+
+                $deposito_liquido = $deposito_liquido - $taxafixa;
+                $taxa_cash_in = $taxa_cash_in + $taxafixa;
+
+                $date = Carbon::now();
+
+                $cashin = [
+                    "user_id" => $data->user->username,
+                    "externalreference" => $responseData['id'],
+                    "amount" => $data->amount,
+                    "client_name" => $data->debtor_name,
+                    "client_document" => $document,
+                    "client_email" => $data->email,
+                    "date" => $date,
+                    "status" => 'WAITING_FOR_APPROVAL',
+                    "idTransaction" => $responseData['id'],
+                    "deposito_liquido" => $deposito_liquido,
+                    "qrcode_pix" => $responseData['pix']['qrcode'],
+                    "paymentcode" => $responseData['pix']['qrcode'],
+                    "paymentCodeBase64" => $responseData['pix']['qrcode'],
+                    "adquirente_ref" => 'blupay',
+                    "taxa_cash_in" => $taxa_cash_in,
+                    "taxa_pix_cash_in_adquirente" => self::$taxaCashIn,
+                    "taxa_pix_cash_in_valor_fixo" => $taxafixa,
+                    "client_telefone" => $data->phone,
+                    "executor_ordem" => 'blupay',
+                    "descricao_transacao" => $descricao,
+                    "callback" => $data->postback,
+                    "split_email" => null,
+                    "split_percentage" => null,
+                ];
+
+                Solicitacoes::create($cashin);
+
+                return [
+                    "data" => [
+                        "idTransaction" => $responseData['id'],
+                        "qrcode" => $responseData['pix']['qrcode'],
+                        "qr_code_image_url" => 'https://quickchart.io/qr?text=' . $responseData['pix']['qrcode']
+                    ],
+                    "status" => 200
+                ];
+            }
+        } else {
+            return [
+                "data" => [
+                    'status' => 'error'
+                ],
+                "status" => 401
+            ];
+        }
+    }
+
+    public static function requestPaymentBlupay($request)
+    {
+        $user = User::where('id', $request->user->id)->first();
+
+        $setting = App::first();
+        $taxafixa = $user->taxa_cash_out_fixa ?? 0;
+        $amount = $request->amount;
+
+        $taxatotal = ((float) $request->amount * (float) $user->taxa_cash_out / 100);
+        $cashout_liquido = (float) $request->amount - $taxatotal;
+        $taxa_cash_out = $taxatotal;
+        $descricao = "PORCENTAGEM";
+
+        $cashout_liquido = $cashout_liquido - $taxafixa;
+        $taxa_cash_out = $taxa_cash_out + $taxafixa;
+
+        if ($user->saldo < $cashout_liquido) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Saldo insuficiente.",
+            ], 401);
+        }
+
+
+        $date = Carbon::now();
+
+        // Verifica se o valor do saque pode ser processado automaticamente
+        $limiteSaque = (float) $setting->limite_saque_automatico;
+        $valorSaque = (float) $amount;
+
+        $manual = true;
+        if ($limiteSaque > 0 && $valorSaque > $limiteSaque)
+            $manual = true;
+        elseif ($limiteSaque == 0)
+            $manual = false;
+        //dd($manual);
+        if ($manual) {
+            $request->baasPostbackUrl = 'web';
+            //Helper::incrementAmount($user, $request->amount, 'valor_saque_pendente');
+            //Helper::decrementAmount($user, $cashout_liquido, 'saldo');
+
+            return self::generateTransactionPaymentManualBlupay(
+                $request,
+                $taxa_cash_out,
+                $cashout_liquido,
+                $date,
+                $descricao,
+                $user
+            );
+        }
+
+        // Verifica se ainda está dentro do horário permitido para saque
+        $hourLimitWithdraw = $setting->hour_limit_withdraw;
+        $dentroHorario = false;
+        if (Carbon::now()->lt(Carbon::today()->setHour((int) $hourLimitWithdraw)))
+            $dentroHorario = true;
+        elseif (is_null($hourLimitWithdraw))
+            $dentroHorario = true;
+
+        if (!$dentroHorario) {
+            $request->baasPostbackUrl = 'web';
+            //Helper::incrementAmount($user, $request->amount, 'valor_saque_pendente');
+            //Helper::decrementAmount($user, $cashout_liquido, 'saldo');
+
+            return self::generateTransactionPaymentManualBlupay(
+                $request,
+                $taxa_cash_out,
+                $cashout_liquido,
+                $date,
+                $descricao,
+                $user
+            );
+        }
+
+        // if ($request->baasPostbackUrl === 'web') {
+        //Helper::incrementAmount($user, $request->amount, 'valor_saque_pendente');
+        //Helper::decrementAmount($user, $cashout_liquido, 'saldo');
+
+        //    return self::generateTransactionPaymentManualBlupay($request, $taxa_cash_out, $cashout_liquido, $date, $descricao, $user);
+        //  }
+
+        if (self::generateCredentialsBlupay()) {
+            $name = $request->debtor_name ?? "Cliente de " . $request->user->name;
+            $callback = url("blupay/callback/withdraw");
+
+            $payload = [
+                "amount" => floatval($cashout_liquido * 100),
+                "pixKey" => $request->pixKey,
+                "pixKeyType" => $request->pixKeyType == 'aleatoria' ? 'RANDOM' : strtoupper($request->pixKeyType),
+                "destinationName" => $name,
+                "destinationDocument" => self::semAcentos($request->user->cpf_cnpj),
+                "postbackUrl" => $callback
+            ];
+
+            Log::debug('[BlupayTait][requestPayment][payload]: '.json_encode($payload));
+            self::$headers['Idempotency-Key'] = Str::uuid()->toString();
+
+            $response = Http::withHeaders(self::$headers)->post(self::$urlCashOut, $payload);
+            Log::debug('[BlupayTait][requestPayment][response]: '.json_encode($response->json()));
+            if ($response->successful()) {
+                $responseData = $response->json()['data'];
+
+                $pixKey = $request->pixKey;
+
+                switch ($request->pixKeyType) {
+                    case 'cpf':
+                    case 'cnpj':
+                    case 'phone':
+                        $pixKey = preg_replace('/[^0-9]/', '', $pixKey);
+                        break;
+                }
+
+                $pixcashout = [
+                    "user_id" => $request->user->username,
+                    "externalreference" => $responseData['id'],
+                    "amount" => $request->amount,
+                    "beneficiaryname" => $name,
+                    "beneficiarydocument" => self::semAcentos($request->user->cpf_cnpj),
+                    "pix" => $pixKey,
+                    "pixkey" => strtolower($request->pixKeyType),
+                    "date" => $date,
+                    "status" => "PENDING",
+                    "type" => "PIX",
+                    "idTransaction" => $responseData['id'],
+                    "taxa_cash_out" => $taxa_cash_out,
+                    "cash_out_liquido" => $cashout_liquido,
+                    "end_to_end" => $responseData['id'],
+                    "callback" => $request->baasPostbackUrl,
+                    "descricao_transacao" => $descricao,
+                    "adquirente_ref" => 'blupay',
+                    "taxa_pix_cash_out_adquirente" => self::$taxaCashOut
+                ];
+
+                $cashout = SolicitacoesCashOut::create($pixcashout);
+
+                return [
+                    "status" => 200,
+                    "data" => [
+                        "id" => $responseData['id'],
+                        "amount" => $request->amount,
+                        "pixKey" => $request->pixKey,
+                        "pixKeyType" => $request->pixKeyType,
+                        "withdrawStatusId" => "PendingProcessing",
+                        "createdAt" => $responseData['createdAt'] ?? $date,
+                        "updatedAt" => $responseData['createdAt'] ?? $date
+                    ]
+                ];
+            }
+        } else {
+            return [
+                "status" => 200,
+                "data" => [
+                    "status" => "error"
+                ]
+            ];
+        }
+    }
+
+    protected static function generateTransactionPaymentManualBlupay($request, $taxa_cash_out, $cashout_liquido, $date, $descricao, $user)
+    {
+        self::generateCredentialsBlupay();
+        $idTransaction = Str::uuid()->toString();
+        $name = $request->debtor_name ?? "Cliente de " . $request->user->name;
+        $document = $request->user->cpf_cnpj;
+
+        $pixKey = $request->pixKey;
+
+        switch ($request->pixKeyType) {
+            case 'cpf':
+            case 'cnpj':
+            case 'phone':
+                $pixKey = preg_replace('/[^0-9]/', '', $pixKey);
+                break;
+        }
+
+        $pixcashout = [
+            "user_id" => $request->user->username,
+            "externalreference" => $idTransaction,
+            "amount" => $request->amount,
+            "beneficiaryname" => $name,
+            "beneficiarydocument" => $document,
+            "pix" => $pixKey,
+            "pixkey" => strtolower($request->pixKeyType),
+            "date" => $date,
+            "status" => "PENDING",
+            "type" => "PIX",
+            "idTransaction" => $idTransaction,
+            "taxa_cash_out" => $taxa_cash_out,
+            "cash_out_liquido" => $cashout_liquido,
+            "end_to_end" => $idTransaction,
+            "callback" => $request->baasPostbackUrl,
+            "descricao_transacao" => "WEB",
+            "adquirente_ref" => 'blupay',
+            "taxa_pix_cash_out_adquirente" => self::$taxaCashOut
+        ];
+
+        $cashout = SolicitacoesCashOut::create($pixcashout);
+
+        return [
+            "status" => 200,
+            "data" => [
+                "id" => $idTransaction,
+                "amount" => $request->amount,
+                "pixKey" => $request->pixKey,
+                "pixKeyType" => $request->pixKeyType,
+                "withdrawStatusId" => "PendingProcessing",
+                "createdAt" => $date,
+                "updatedAt" => $date
+            ]
+        ];
+    }
+
+    public static function liberarSaqueManualBlupay($id)
+    {
+        if (self::generateCredentialsBlupay()) {
+            $cashout = SolicitacoesCashOut::where('id', $id)->first();
+            $callback = url("blupay/callback/withdraw");
+
+            $payload = [
+                "amount" => floatval($cashout->cash_out_liquido * 100),
+                "pixKey" => $cashout->pix,
+                "pixKeyType" => $cashout->pixkey == 'aleatoria' ? 'RANDOM' : strtoupper($cashout->pixkey),
+                "destinationName" => $cashout->beneficiaryname,
+                "destinationDocument" => self::semAcentos($cashout->beneficiarydocument),
+                "postbackUrl" => $callback
+            ];
+
+            self::$headers['Idempotency-Key'] = self::$idempotencyKey;
+            $response = Http::withHeaders(self::$headers)->post(self::$urlCashOut, $payload);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                $pixcashout = [
+                    "externalreference" => $responseData['id'],
+                    "idTransaction" => $responseData['id'],
+                    "end_to_end" => $responseData['id'],
+                    "descricao_transacao" => "LIBERADOADMIN"
+                ];
+
+                $cashout = SolicitacoesCashOut::where('id', $id)->update($pixcashout);
+                return back()->with('success', 'Pedido de saque enviado com sucesso!');
+            } else {
+                return back()->with('error', 'Houve um erro ao liberar saque.');
+            }
+        }
+    }
+}
