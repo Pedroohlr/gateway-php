@@ -225,7 +225,17 @@ class Helper
 
     public static function getSetting()
     {
-        return App::first();
+        return App::firstOrCreate([], [
+            'gateway_name'                       => 'Gateway',
+            'gateway_logo'                       => '/img/logo.png',
+            'gateway_favicon'                    => '/img/favicon.ico',
+            'gateway_color'                      => '#000000',
+            'bg_theme'                           => 'bg-theme3',
+            'taxa_cash_in_padrao'                => 4.00,
+            'taxa_cash_out_padrao'               => 4.00,
+            'taxa_fixa_padrao'                   => 5.00,
+            'taxa_pix_valor_real_cash_in_padrao' => 5.00,
+        ]);
     }
 
     public static function incrementAmount(User $user, $valor, $campo)

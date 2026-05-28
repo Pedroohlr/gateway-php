@@ -1,6 +1,6 @@
 @php
     $setting = \App\Helpers\Helper::getSetting();
-    $color = $setting->gateway_color;
+    $color = $setting->gateway_color ?? '#000000';
 @endphp
 
 @php

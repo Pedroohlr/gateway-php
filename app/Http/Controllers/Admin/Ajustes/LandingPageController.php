@@ -11,7 +11,7 @@ class LandingPageController extends Controller
 {
     public function welcome()
     {
-        $landing = LandingPage::first();
+        $landing = LandingPage::firstOrNew([]);
         return view("welcome", compact('landing'));
     }
 

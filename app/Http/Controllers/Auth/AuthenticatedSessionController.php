@@ -67,7 +67,7 @@ class AuthenticatedSessionController extends Controller
         $password = $request->password;
 
 
-        $gerente = App::first()->contato;
+        $gerente = App::value('contato') ?? '';
 
         $user = User::where('email', $email)->first();
 
@@ -118,7 +118,7 @@ class AuthenticatedSessionController extends Controller
         $password = $request->password;
 
 
-        $gerente = App::first()->contato;
+        $gerente = App::value('contato') ?? '';
 
         $user = User::where('email', $email)->first();
 

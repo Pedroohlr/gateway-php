@@ -34,7 +34,7 @@ class AdquirentesController extends Controller
         }
 
         $settings = App::first();
-        $adquirente = Adquirente::where('status', 1)->first()['adquirente'];
+        $adquirente = Adquirente::where('status', 1)->value('adquirente') ?? 'primepag';
 
         return view("admin.ajustes.adquirentes", compact(
             'adquirente',
