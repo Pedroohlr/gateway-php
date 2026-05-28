@@ -25,7 +25,7 @@ Route::post('/validar', [AuthenticatedSessionController::class, 'validateCode'])
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardControlller::class, 'index'])->name('dashboard');
     Route::get('/documentacao', [DocumentacaoControlller::class, 'index'])->name('documentacao');
-    Route::get('/enviar-doc', [EnviarDocControlller::class, 'index'])->name('profile.index');
+    Route::get('/enviar-doc', [EnviarDocControlller::class, 'index'])->name('profile.enviar-doc');
     Route::post('/enviar-docs/{id}', [EnviarDocControlller::class, 'enviarDocs'])->where('id', ".*")->name('profile.enviardocs');
 
 
