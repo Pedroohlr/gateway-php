@@ -6,7 +6,6 @@ public/build
 public/hot
 public/storage
 storage/pail
-docker
 *.md
 .env.backup
 .env.production
