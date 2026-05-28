@@ -1,3 +1,13 @@
+FROM node:20-alpine AS node-builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+RUN npm run build
+
 FROM php:8.2-fpm
 
 WORKDIR /var/www
@@ -17,6 +27,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 COPY . .
+COPY --from=node-builder /app/public/build ./public/build
 
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
