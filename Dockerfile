@@ -36,8 +36,9 @@ COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache \
+RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/public \
     && chmod -R 775 /var/www/storage /var/www/bootstrap/cache \
+    && chmod -R 755 /var/www/public \
     && chmod +x /entrypoint.sh
 
 EXPOSE 80

@@ -355,7 +355,7 @@ class Helper
             "web_app_manifest_version" => 2
         ];
 
-        file_put_contents(public_path('manifest.json'), json_encode($manifest));
+        @file_put_contents(public_path('manifest.json'), json_encode($manifest));
         return $manifest;
     }
 
@@ -405,7 +405,7 @@ class Helper
             });
             JS;
 
-        file_put_contents(public_path('service-worker.js'), $service_worker);
+        @file_put_contents(public_path('service-worker.js'), $service_worker);
     }
 
 }
