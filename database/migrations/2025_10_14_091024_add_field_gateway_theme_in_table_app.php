@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('app', function (Blueprint $table) {
-            $table->string('bg_theme')->default('bg-theme3')->after('gateway_color');
+            $table->string('bg_theme')->default('bg-theme3');
         });
     }
 

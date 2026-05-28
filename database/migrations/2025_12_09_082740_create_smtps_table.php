@@ -18,20 +18,8 @@ return new class extends Migration {
             $table->string('pass')->nullable();
             $table->string('color')->nullable()->default('#00bd10');
             $table->string('image')->nullable();
-            $table->longText('auth_title')->nullable()->default('<h1 style="text-align:center;">
-            Autenticação em Duas Etapas
-        </h1>');
-
-            $table->longText('auth_message')->nullable()->default('<div>
-            <h3 style="color:gray;">
-                Olá Guilherme vieira,
-            </h3>
-
-            <h3 style="color:gray;">
-                Use o código abaixo para concluir seu login na PagVIVA.
-                Ele é válido por <span style="color:black">15 minutos</span>.
-            </h3>
-        </div>');
+            $table->longText('auth_title')->nullable();
+            $table->longText('auth_message')->nullable();
             $table->timestamps();
         });
     }

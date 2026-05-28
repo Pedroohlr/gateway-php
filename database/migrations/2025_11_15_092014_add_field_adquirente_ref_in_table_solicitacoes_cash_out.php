@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('solicitacoes_cash_out', function (Blueprint $table) {
-            $table->string('adquirente_ref')->nullable()->default('cashtime')->after('callback');
+            $table->string('adquirente_ref')->nullable()->default('cashtime');
         });
     }
 

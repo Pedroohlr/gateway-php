@@ -83,6 +83,12 @@ class AuthenticatedSessionController extends Controller
                 ->with('contato', $contato);
         }
 
+        if (app()->environment('local')) {
+            Auth::login($user);
+            $request->session()->regenerate();
+            return redirect()->intended(route('dashboard', absolute: false))->with('success', 'Bem vindo de volta!');
+        }
+
         $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
         $user->update(['mail_code' => $code]);
