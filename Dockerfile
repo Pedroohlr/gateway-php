@@ -20,6 +20,7 @@ COPY . .
 
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
+RUN rm -f /etc/nginx/sites-enabled/default
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
